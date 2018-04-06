@@ -1,0 +1,20 @@
+date_format_list <- list('year-month-day' = c('ymd'='ymd', 'ymd_h'='ymd_H', 'ymd_hm'='ymd_HM', 'ymd_hms'='ymd_HMS'),
+												 'month-day-year' = c('mdy'='mdy', 'mdy_h'='mdy_H', 'mdy_hm'='mdy_HM', 'mdy_hms'='mdy_HMS'),
+												 'day-month-year' = c('dmy'='dmy', 'dmy_h'='dmy_H', 'dmy_hm'='dmy_HM', 'dmy_hms'='dmy_HMS'),
+												 'Date Parts' = c('Year'='%Y', 'Month'='%m',
+												 								 'Day of Year'='%j',
+												 								 'Year-Month'='%Y-%m', 'Month-Year'='%m-%Y', 'Month-Day'='%m-%d'),
+												 'Time Parts' = c('Hour'='%H', 'Minute'='%M', 'Second'='%S',
+												 								 'Hour:Minute'='%H:%M', 'Hour:Minute:Second'='%H:%M:%S'),
+												 'Other' = c(' - Guess - ' = '-', ' '='-'))
+
+date_trans_list <- list('year-month-day' = c('ymd'='%Y-%m-%d', 'ymd_h'='%Y-%m-%d %H', 'ymd_hm'='%Y-%m-%d %H:%M', 'ymd_hms'='%Y-%m-%d %H:%M:%S'),
+												'month-day-year' = c('mdy'='%m-%d-%Y', 'mdy_h'='%m-%d-%Y %H', 'mdy_hm'='%m-%d-%Y %H:%M', 'mdy_hms'='%m-%d-%Y %H:%M:%S'),
+												'day-month-year' = c('dmy'='%d-%m-%Y', 'dmy_h'='%d-%m-%Y %H', 'dmy_hm'='%d-%m-%Y %H:%M', 'dmy_hms'='%d-%m-%Y %H:%M:%S'),
+												'Date Parts' = c('Year'='year', 'Month'='month',
+																				 'Day of Year'='%j', 'Week of Year'='%V', 'Quarter of Year'='quarter',
+																				 'Day of Week'='wday', 'Day of Month'='mday',
+																				 'Year-Quarter'='quarter', 'Year-Month'='%Y-%m',
+																				 'Month-Day'='%m-%d'),
+												'Time Parts' = c('Hour'='hour', 'Minute'='minute', 'Second'='second',
+																				 'Hour:Minute'='%H:%M', 'Hour:Minute:Second'='%H:%M:%S'))
