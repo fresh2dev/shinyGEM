@@ -1,6 +1,6 @@
 options(readr.show_progress = FALSE,
-				shiny.trace=FALSE,
-        shiny.maxRequestSize = 100 * 1024 ^ 2)
+				shiny.trace=FALSE)
+        # shiny.maxRequestSize = 100 * 1024 ^ 2)
         # shiny.error = browser,
         # shiny.reactlog=TRUE)
 
