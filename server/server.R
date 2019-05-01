@@ -1,88 +1,5 @@
-options(readr.show_progress = FALSE,
-				shiny.trace=FALSE)
-        # shiny.maxRequestSize = 100 * 1024 ^ 2)
-        # shiny.error = browser,
-        # shiny.reactlog=TRUE)
 
-source('date_formats.R')
-
-coalesce <- function(input, ifnull) {
-  if (is.null(input)) {
-    return(ifnull)
-  } else {
-    return(input)
-  }
-}
-
-stringsAsFactors <- function (dt) {
-	na_cols <- dt[, sapply(.SD, anyNA)]
-  for (c in colnames(dt)[na_cols]) {
-  	if (is.POSIXct(dt[[c]])) {
-  		dt[is.na(get(c)), (c) := as.POSIXct('0001-01-01 00:00:00', tz='UTC')]
-  	} else if (is.Date(dt[[c]])) {
-  		dt[is.na(get(c)), (c) := as.Date('0001-01-01')]
-		} else {
-	  	if (!is.character(dt[[c]])) {
-	  		dt[, (c) := as.character(get(c))]
-	  	}
-	    dt[is.na(get(c)), (c) := 'NULL']
-  	}
-  }
-
-  dt <- dt[, lapply(.SD, function(x) {
-  	if (is.logical(x)) {
-  		factor(x)
-  	} else {
-  		new_x <- if (!is.factor(x)) { x } else { as.character(x) }
-
-	  	if (!is.character(new_x)) {
-	  		new_x
-	    } else if (all(grepl(new_x, pattern='^\\d+$'))) {
-	      as.numeric(new_x)
-	    } else if (all(grepl(new_x, pattern='^\\d+.*%.*$'))) {
-	      as.numeric(sub(new_x, pattern='%', replacement = '', fixed=T)) / 100
-	    } else {
-	      factor(gsub(new_x, pattern="'", replacement = "`", fixed=T))
-	    }
-		}
-  })]
-
-  return(dt)
-}
-
-
-# https://rdrr.io/cran/kimisc/src/R/cut.R
-cut_format <- function(x, breaks, include.lowest = FALSE, right = TRUE,
-											 ordered_result = FALSE, ...,
-											 format_fun = format, sep = ", ",
-											 paren = c("(", "[", ")", "]")) {
-	if (length(breaks) < 2L) {
-		stop("Please specify breaks as a numeric vector of length >= 2",
-				 call. = FALSE)
-	}
-
-	if (right) {
-		ob <- c(include.lowest, rep(FALSE, length(breaks) - 2L))
-		cb <- rep(TRUE, length(breaks) - 1L)
-	} else {
-		ob <- rep(TRUE, length(breaks) - 1L)
-		cb <- c(rep(FALSE, length(breaks) - 2L), include.lowest)
-	}
-
-	ob <- ifelse(ob, paren[[2L]], paren[[1L]])
-	cb <- ifelse(cb, paren[[4L]], paren[[3L]])
-
-	formatted_breaks <- format_fun(breaks)
-	labels <- paste0(ob, head(formatted_breaks, -1L), sep, tail(formatted_breaks, -1L), cb)
-	cut.default(x = x, breaks = breaks, labels = labels, include.lowest = include.lowest,
-							right = right, ordered_result = ordered_result, ...)
-}
-
-# https://stackoverflow.com/a/8197703
-gg_color_hue <- function(n) {
-  hues = seq(15, 375, length = n + 1)
-  hcl(h = hues, l = 65, c = 100)[1:n]
-}
+source('server/helpers.R', local=TRUE)
 
 function(input, output, session) {
 
@@ -90,21 +7,33 @@ function(input, output, session) {
 
   c <- reactiveValues(date=NULL, group=NULL, feature=NULL, value=NULL)
 
+  plot_title_dbnce <- reactive({ input$title }) %>% debounce(millis=3000)
+  plot_subtitle_dbnce <- reactive({ input$subtitle }) %>% debounce(millis=3000)
+  plot_caption_dbnce <- reactive({ input$caption }) %>% debounce(millis=3000)
+  plot_xlab_dbnce <- reactive({ input$xlab }) %>% debounce(millis=3000)
+  plot_ylab_dbnce <- reactive({ input$ylab }) %>% debounce(millis=3000)
+  plot_height_dbnce <- reactive({ input$plotHeight }) %>% debounce(millis=3000)
+  plot_width_dbnce <- reactive({ input$plotWidth }) %>% debounce(millis=3000)
+  decimal_precision_dbnce <- reactive({ input$decimalPrecision }) %>% debounce(millis=3000)
+  n_x_breaks_dbnce <- reactive({ input$n_x_breaks }) %>% debounce(millis=3000)
+  n_y_breaks_dbnce <- reactive({ input$n_y_breaks }) %>% debounce(millis=3000)
+  hist_bins_dbnce <- reactive({ input$bins }) %>% debounce(millis=3000)
+
   observe({
 
     req(input$presetDataset)
 
-    print('Entered origin block')
+    # print('Entered origin block')
 
     dataset <- NULL
     if (input$presetDataset == 'Game Ratings') {
-      dataset <- readRDS('ign.RDS')
+      dataset <- readRDS('./data/rds/ign.RDS')
     } else if (input$presetDataset == 'Border Patrol Apprehensions') {
-      dataset <- readRDS('border.RDS')
+      dataset <- readRDS('./data/rds/border.RDS')
     } else if (input$presetDataset == 'College Scorecards') {
-      dataset <- readRDS('college.RDS') %>% stringsAsFactors()
+      dataset <- readRDS('./data/rds/college.RDS') %>% stringsAsFactors()
     } else if (input$presetDataset == 'Starbucks Nutrition') {
-      dataset <- readRDS('starbucks.RDS')
+      dataset <- readRDS('./data/rds/starbucks.RDS')
     }
 
     my$dataset_original <- dataset
@@ -114,29 +43,29 @@ function(input, output, session) {
   })
 
   observe(priority = 10, {
-  	req(my$dataset_original)
+    req(my$dataset_original)
 
-  	# also fire when 'startOver', 'original_as_source' is clicked.
-  	input$startOver
-  	input$original_as_source
+    # also fire when 'startOver', 'original_as_source' is clicked.
+    input$startOver
+    input$original_as_source
 
-  	dataset <- copy(my$dataset_original)
+    dataset <- copy(my$dataset_original)
 
-  	isolate({
+    isolate({
 
-    	dataset[, '#id' := 1:.N]
-    	n_col <- ncol(dataset)
-    	setcolorder(dataset, neworder=c(n_col, 1:(n_col-1)))
-    	setkeyv(dataset, cols = '#id')
+      dataset[, '#id' := 1:.N]
+      n_col <- ncol(dataset)
+      setcolorder(dataset, neworder=c(n_col, 1:(n_col-1)))
+      setkeyv(dataset, cols = '#id')
 
-    	for (col in c('date', 'group', 'feature', 'value')) {
-    	  if (!is.null(c[[col]]) && !(c[[col]] %in% colnames(dataset))) {
-    	    c[[col]] <- NULL
-    	  }
-    	}
+      for (col in c('date', 'group', 'feature', 'value')) {
+        if (!is.null(c[[col]]) && !(c[[col]] %in% colnames(dataset))) {
+          c[[col]] <- NULL
+        }
+      }
 
-    	my$dataset <- dataset
-  	})
+      my$dataset <- dataset
+    })
   })
 
   observeEvent(input$userFile, {
@@ -164,7 +93,7 @@ function(input, output, session) {
 
   observeEvent(input$meltData, {
 
-    print('Entered melt block')
+    # print('Entered melt block')
 
     if (length(input$userFileIdCols) > 0) {
 
@@ -234,7 +163,7 @@ function(input, output, session) {
 
     req(input$columnsToCombine)
 
-    print('Entered combine block')
+    # print('Entered combine block')
 
     dataset <- copy(my$dataset)
 
@@ -391,7 +320,7 @@ function(input, output, session) {
   observe(priority = 2, {
     req(my$dataset)
 
-    print('Populating column lists')
+    # print('Populating column lists')
 
     col_names <- colnames(my$dataset) %>% .[. != '#id']
 
@@ -420,7 +349,7 @@ function(input, output, session) {
   observe(priority = 1, {
     req(my$dataset, c$date)
 
-  	print('Guessing date format.')
+    # print('Guessing date format.')
 
     dates <- as.character(my$dataset[[c$date]][1:100])
 
@@ -466,116 +395,116 @@ function(input, output, session) {
   })
 
   decimalPrecision <- reactive({
-    if (is.na(input$decimalPrecision)) {
+    if (is.na(decimal_precision_dbnce())) {
       return(2L)
     }
-    return(as.integer(input$decimalPrecision))
+    return(as.integer(decimal_precision_dbnce()))
   })
 
   my$dataset_dates_parsed <- reactive({
 
-  	req(my$dataset_filtered,
-  	    # any(!is.null(c(cols$date, cols$group, cols$feature, cols$value))),
-  			length(c(c$date, input$dateFormat)) %in% c(0, 2))
+    req(my$dataset_filtered,
+        # any(!is.null(c(cols$date, cols$group, cols$feature, cols$value))),
+        length(c(c$date, input$dateFormat)) %in% c(0, 2))
 
-  	print('Entered dates_parsed block')
+    # print('Entered dates_parsed block')
 
-  	dataset <- copy(my$dataset_filtered)
+    dataset <- copy(my$dataset_filtered)
 
-  	date_col <- c$date
+    date_col <- c$date
 
-  	if (is.null(date_col) || is.null(input$dateFormat)) {
-  		date_col <- NULL
-  	} else {
-  		if (input$dateFormat == ' - Guess - ') {
-  			dataset[, c(date_col) := anytime(dataset[[date_col]])]
-  		} else {
-  			date_format_str <- NULL
-  			date_format_str <- sapply(date_format_list, extract, input$dateFormat) %>% .[!is.na(.)]
-  			dataset[, c(date_col) := parse_date_time(dataset[[date_col]], orders = date_format_str)]
-  		}
+    if (is.null(date_col) || is.null(input$dateFormat)) {
+      date_col <- NULL
+    } else {
+      if (input$dateFormat == ' - Guess - ') {
+        dataset[, c(date_col) := anytime(dataset[[date_col]])]
+      } else {
+        date_format_str <- NULL
+        date_format_str <- sapply(date_format_list, extract, input$dateFormat) %>% .[!is.na(.)]
+        dataset[, c(date_col) := parse_date_time(dataset[[date_col]], orders = date_format_str)]
+      }
 
-  		if (anyNA(dataset[[date_col]])) {
-  			dataset[, c(date_col) := NULL]
-  			date_col <- NULL
-  		}
-  	}
+      if (anyNA(dataset[[date_col]])) {
+        dataset[, c(date_col) := NULL]
+        date_col <- NULL
+      }
+    }
 
-  	print('Entered date_filtered block')
+    # print('Entered date_filtered block')
 
-  	if (!is.null(date_col)) {
-  		if (sum(!is.na(input$dateRange)) == 2) {
-  			dataset <- dataset[between(get(isolate(date_col)), ymd(input$dateRange[1]), ymd(input$dateRange[2]), incbounds = T), ]
-  		} else if (!is.na(input$dateRange[1])) {
-  			dataset <- dataset[get(isolate(date_col)) >= ymd(input$dateRange[1]), ]
-  		} else if (!is.na(input$dateRange[2])) {
-  			dataset <- dataset[get(isolate(date_col)) <= ymd(input$dateRange[2]), ]
-  		}
+    if (!is.null(date_col)) {
+      if (sum(!is.na(input$dateRange)) == 2) {
+        dataset <- dataset[between(get(isolate(date_col)), ymd(input$dateRange[1]), ymd(input$dateRange[2]), incbounds = T), ]
+      } else if (!is.na(input$dateRange[1])) {
+        dataset <- dataset[get(isolate(date_col)) >= ymd(input$dateRange[1]), ]
+      } else if (!is.na(input$dateRange[2])) {
+        dataset <- dataset[get(isolate(date_col)) <= ymd(input$dateRange[2]), ]
+      }
 
-  		print('Entered days_of_week block')
+      # print('Entered days_of_week block')
 
-  		if (between(length(input$daysOfWeek), 0, 7, incbounds = F)) {
-  			dataset <- dataset[weekdays(get(date_col)) %in% input$daysOfWeek,]
-  		}
-  	}
+      if (between(length(input$daysOfWeek), 0, 7, incbounds = F)) {
+        dataset <- dataset[weekdays(get(date_col)) %in% input$daysOfWeek,]
+      }
+    }
 
-  	print('Entered dates_transformed block')
+    # print('Entered dates_transformed block')
 
-  	if (!is.null(date_col) && !is.null(input$dateTransform)) {
-  		date_trans_str <- sapply(date_trans_list, extract, input$dateTransform) %>% .[!is.na(.)]
+    if (!is.null(date_col) && !is.null(input$dateTransform)) {
+      date_trans_str <- sapply(date_trans_list, extract, input$dateTransform) %>% .[!is.na(.)]
 
-  		if (grepl(date_trans_str, pattern = '%', fixed = TRUE)) {
-  			dataset[, c(date_col) := format(dataset[[date_col]], date_trans_str)]
-  			if (all(grepl(dataset[[date_col]], pattern='^\\d+$'))) {
-  				dataset[, c(date_col) := factor(as.integer(dataset[[date_col]]), ordered = TRUE)] # for week of year
-  			}
-  		} else {
-  			date_trans_FUN <- match.fun(date_trans_str)
-  			if (input$dateTransform =='Year-Quarter') {
-  				dataset[, c(date_col) := factor(date_trans_FUN(dataset[[date_col]], with_year=TRUE), ordered=TRUE)]
-  			} else if (is.null(as.list(args(date_trans_FUN))[['label']])) {
-  				dataset[, c(date_col) := factor(date_trans_FUN(dataset[[date_col]]), ordered=TRUE)]
-  			} else {
-  				dataset[, c(date_col) := factor(date_trans_FUN(dataset[[date_col]], label = TRUE), ordered=TRUE)]
-  			}
-  		}
+      if (grepl(date_trans_str, pattern = '%', fixed = TRUE)) {
+        dataset[, c(date_col) := format(dataset[[date_col]], date_trans_str)]
+        if (all(grepl(dataset[[date_col]], pattern='^\\d+$'))) {
+          dataset[, c(date_col) := factor(as.integer(dataset[[date_col]]), ordered = TRUE)] # for week of year
+        }
+      } else {
+        date_trans_FUN <- match.fun(date_trans_str)
+        if (input$dateTransform =='Year-Quarter') {
+          dataset[, c(date_col) := factor(date_trans_FUN(dataset[[date_col]], with_year=TRUE), ordered=TRUE)]
+        } else if (is.null(as.list(args(date_trans_FUN))[['label']])) {
+          dataset[, c(date_col) := factor(date_trans_FUN(dataset[[date_col]]), ordered=TRUE)]
+        } else {
+          dataset[, c(date_col) := factor(date_trans_FUN(dataset[[date_col]], label = TRUE), ordered=TRUE)]
+        }
+      }
 
-  		if (grepl(names(date_trans_str), pattern='Parts', fixed=T)) {
-  			setnames(dataset, old=date_col, new=input$dateTransform)
-  			date_col <- input$dateTransform
-  		}
-  	}
+      if (grepl(names(date_trans_str), pattern='Parts', fixed=T)) {
+        setnames(dataset, old=date_col, new=input$dateTransform)
+        date_col <- input$dateTransform
+      }
+    }
 
-		cols$date <- date_col
+    cols$date <- date_col
 
-  	return(dataset)
+    return(dataset)
   })
 
   total_n <- reactiveValues(groups=0, features=0)
 
   my$dataset_grouped <- reactive({
-  	req(my$dataset_dates_parsed())
+    req(my$dataset_dates_parsed())
 
-  	print('Entered dataset_grouped block')
+    # print('Entered dataset_grouped block')
 
     dataset <- copy(my$dataset_dates_parsed())
 
-  	group_col <- c$group
-  	feature_col <- c$feature
-  	value_col <- c$value
+    group_col <- c$group
+    feature_col <- c$feature
+    value_col <- c$value
 
-  	isolate({
-    	date_col <- cols$date
+    isolate({
+      date_col <- cols$date
 
-    	if (!is.null(date_col)) {
-    	  if (!is.null(group_col) && group_col == c$date) { group_col <- date_col }
-    	  if (!is.null(feature_col) && feature_col == c$date) { feature_col <- date_col }
-    	}
-  	})
+      if (!is.null(date_col)) {
+        if (!is.null(group_col) && group_col == c$date) { group_col <- date_col }
+        if (!is.null(feature_col) && feature_col == c$date) { feature_col <- date_col }
+      }
+    })
 
     id_col <- if (any(!is.null(c(date_col, group_col, feature_col, value_col)))) { '#id' } else { NULL}
 
-    print('Entered agg_within block')
+    # print('Entered agg_within block')
 
     grouping <- c(date_col, group_col, feature_col)
 
@@ -609,7 +538,7 @@ function(input, output, session) {
       value_col <- paste(input$aggWithinFUN, value_col, sep = ' ')
     }
 
-    print('Entered agg_between block')
+    # print('Entered agg_between block')
 
     if (!is.null(value_col)) {
       setnames(dataset, 'value', value_col)
@@ -617,7 +546,7 @@ function(input, output, session) {
       dataset[, value := NULL]
     }
 
-    print('Entered rounded_values_filtered block')
+    # print('Entered rounded_values_filtered block')
 
     if (!is.null(value_col)) {
       dataset[, c(value_col) := round(dataset[[value_col]], decimalPrecision())]
@@ -649,33 +578,33 @@ function(input, output, session) {
       }
     }
 
-    print('Entered topN block')
+    # print('Entered topN block')
 
     if (is.null(group_col)) {
-    	total_n$groups <- 0L
+      total_n$groups <- 0L
     } else {
-    	n_groups <- length(levels(dataset[[group_col]]))
-    	total_n$groups <- n_groups
-    	max_groups <- 50L
-    	if (!between(n_groups, 0L, max_groups, incbounds = T)) {
-      	dataset <- dataset[get(group_col) %in% (levels(dataset[[group_col]])[1:max_groups]),]
-    	}
+      n_groups <- length(levels(dataset[[group_col]]))
+      total_n$groups <- n_groups
+      max_groups <- 50L
+      if (!between(n_groups, 0L, max_groups, incbounds = T)) {
+        dataset <- dataset[get(group_col) %in% (levels(dataset[[group_col]])[1:max_groups]),]
+      }
     }
 
     if (is.null(feature_col)) {
-    	total_n$features <- 0L
+      total_n$features <- 0L
     } else {
-    	n_features <- length(levels(dataset[[feature_col]]))
-    	total_n$features <- n_features
-    	max_features <- 100L
+      n_features <- length(levels(dataset[[feature_col]]))
+      total_n$features <- n_features
+      max_features <- 100L
       if (!between(n_features, 0L, max_features, incbounds = T)) {
-      	dataset <- dataset[get(feature_col) %in% (levels(dataset[[feature_col]])[1:max_features]),]
+        dataset <- dataset[get(feature_col) %in% (levels(dataset[[feature_col]])[1:max_features]),]
       }
     }
 
     setorderv(dataset, cols=c(id_col, date_col, group_col, feature_col), order = 1)
 
-  	cols$id <- id_col
+    cols$id <- id_col
     cols$date <- date_col
     cols$group <- group_col
     cols$feature <- feature_col
@@ -694,111 +623,111 @@ function(input, output, session) {
                                 })
 
   coalesce <- function(text, ifnull) {
-  	if (!is.null(text)) {
-  		return(text)
-  	}
+    if (!is.null(text)) {
+      return(text)
+    }
 
-  	return(ifnull)
+    return(ifnull)
   }
 
   observeEvent(c(input$tabContainer, my$dataset_p), priority = 1, {
-  	# clear selections when plot tab changes.
-  	session$sendCustomMessage(type = 'counts_plot_set', message = character(0))
-  	session$sendCustomMessage(type = 'distribution_plot_set', message = character(0))
-  	session$sendCustomMessage(type = 'trends_plot_set', message = character(0))
-  	session$sendCustomMessage(type = 'pairs_plot_set', message = character(0))
+    # clear selections when plot tab changes.
+    session$sendCustomMessage(type = 'counts_plot_set', message = character(0))
+    session$sendCustomMessage(type = 'distribution_plot_set', message = character(0))
+    session$sendCustomMessage(type = 'trends_plot_set', message = character(0))
+    session$sendCustomMessage(type = 'pairs_plot_set', message = character(0))
   })
 
   my$dataset_selected <- reactive({
 
-  	if (all(is.null(c(input$count_plot_selected,
-  										input$trends_plot_selected,
-  										input$distribution_plot_selected,
-  										input$pairs_plot_selected)))) {
-  		return(NULL)
-  	} else {
+    if (all(is.null(c(input$count_plot_selected,
+                      input$trends_plot_selected,
+                      input$distribution_plot_selected,
+                      input$pairs_plot_selected)))) {
+      return(NULL)
+    } else {
 
-	  	selected_list <- NULL
-	  	col_names <- NULL
-	  	dataset <- NULL
+      selected_list <- NULL
+      col_names <- NULL
+      dataset <- NULL
 
-	  	# id_col <- coalesce(cols$id, 'V1')
-	  	date_col <- coalesce(cols$date, 'V1')
-	  	group_col <- coalesce(pcols$group, 'V2')
-	  	feature_col <- coalesce(pcols$feature, 'V3')
+      # id_col <- coalesce(cols$id, 'V1')
+      date_col <- coalesce(cols$date, 'V1')
+      group_col <- coalesce(pcols$group, 'V2')
+      feature_col <- coalesce(pcols$feature, 'V3')
 
-	  	if (!is.null(input$pairs_plot_selected)) {
-	  		selected_list <- input$pairs_plot_selected
+      if (!is.null(input$pairs_plot_selected)) {
+        selected_list <- input$pairs_plot_selected
 
-	  		dataset <- my$dataset_wide()
+        dataset <- my$dataset_wide()
 
-	  		col_names <- colnames(dataset) %>% .[!(. %in% c(input$featureX, input$featureY))]
-	  	} else {
+        col_names <- colnames(dataset) %>% .[!(. %in% c(input$featureX, input$featureY))]
+      } else {
 
-	  		col_names <- c(date_col, group_col, feature_col)
+        col_names <- c(date_col, group_col, feature_col)
 
-		  	if (!is.null(input$count_plot_selected)) {
-		  		selected_list <- input$count_plot_selected
-		  	} else if (!is.null(input$trends_plot_selected)) {
-		  		selected_list <- input$trends_plot_selected
-		  	} else if (!is.null(input$distribution_plot_selected)) {
-		  		selected_list <- input$distribution_plot_selected
-		  	}
+        if (!is.null(input$count_plot_selected)) {
+          selected_list <- input$count_plot_selected
+        } else if (!is.null(input$trends_plot_selected)) {
+          selected_list <- input$trends_plot_selected
+        } else if (!is.null(input$distribution_plot_selected)) {
+          selected_list <- input$distribution_plot_selected
+        }
 
-	  		dataset <- my$dataset_dates_parsed()
-	  	}
+        dataset <- my$dataset_dates_parsed()
+      }
 
-	  	dt_selected <- as.data.table(tstrsplit(selected_list, '|', fixed=T))
+      dt_selected <- as.data.table(tstrsplit(selected_list, '|', fixed=T))
 
-	  	if (ncol(dt_selected) == 1) {
-	  		setnames(dt_selected, '#id')
-	  		join_cols <- '#id'
-	  	} else {
-		  	setnames(dt_selected, col_names)
+      if (ncol(dt_selected) == 1) {
+        setnames(dt_selected, '#id')
+        join_cols <- '#id'
+      } else {
+        setnames(dt_selected, col_names)
 
-		  	join_cols <- dt_selected[, !sapply(.SD, function(x) { all(x=='') || anyNA(x) })]
+        join_cols <- dt_selected[, !sapply(.SD, function(x) { all(x=='') || anyNA(x) })]
 
-		  	dt_selected <- dt_selected[, (join_cols), with=F]
+        dt_selected <- dt_selected[, (join_cols), with=F]
 
-		  	join_cols <- colnames(dt_selected) %>% .[. %in% colnames(dataset)]
+        join_cols <- colnames(dt_selected) %>% .[. %in% colnames(dataset)]
 
-		  	dt_selected <- dt_selected[, (join_cols), with=F]
-	  	}
+        dt_selected <- dt_selected[, (join_cols), with=F]
+      }
 
-	  	if (length(join_cols) == 0) {
-	  		return(dataset)
-	  	}
-	  	else {
-	  	  isolate ({
-	  	    # ensure selected date is same format as dataset date.
-  	  	  if (!is.null(cols$date) && cols$date %in% join_cols && is.character(dataset[[cols$date]])) {
-	  	      date_trans_str <- sapply(date_trans_list, extract, input$dateTransform) %>% .[!is.na(.)]
-	  	      dt_selected[, c(cols$date) := format(as_datetime(get(cols$date)), date_trans_str)]
-	  	      # dataset <- copy(dataset)
-	  	      # dataset[, c(date_col) := as.character(parse_date_time(get(date_col), orders = date_trans_str))]
-  	  	  }
-	  	  })
+      if (length(join_cols) == 0) {
+        return(dataset)
+      }
+      else {
+        isolate ({
+          # ensure selected date is same format as dataset date.
+          if (!is.null(cols$date) && cols$date %in% join_cols && is.character(dataset[[cols$date]])) {
+            date_trans_str <- sapply(date_trans_list, extract, input$dateTransform) %>% .[!is.na(.)]
+            dt_selected[, c(cols$date) := format(as_datetime(get(cols$date)), date_trans_str)]
+            # dataset <- copy(dataset)
+            # dataset[, c(date_col) := as.character(parse_date_time(get(date_col), orders = date_trans_str))]
+          }
+        })
 
-	  		col_types <- dataset[, lapply(.SD, class), .SDcols=join_cols][1]
+        col_types <- dataset[, lapply(.SD, class), .SDcols=join_cols][1]
 
-	  		lapply(1:length(join_cols), function(i) {
-	  			this_col <- join_cols[[i]]
-	  			is_fun <- match.fun(paste0('is.', col_types[[i]]))
-	  			if (!is_fun(dt_selected[[this_col]])) {
-	  				as_fun <- match.fun(paste0('as.', col_types[[i]]))
-	  				dt_selected[, c(this_col) := as_fun(get(this_col))]
-	  			}
-	  			invisible(NULL)
-	  		})
+        lapply(1:length(join_cols), function(i) {
+          this_col <- join_cols[[i]]
+          is_fun <- match.fun(paste0('is.', col_types[[i]]))
+          if (!is_fun(dt_selected[[this_col]])) {
+            as_fun <- match.fun(paste0('as.', col_types[[i]]))
+            dt_selected[, c(this_col) := as_fun(get(this_col))]
+          }
+          invisible(NULL)
+        })
 
-	  		return(merge(dataset, dt_selected, by=join_cols))
-	  	}
-  	}
+        return(merge(dataset, dt_selected, by=join_cols))
+      }
+    }
   })
 
   output$dataset_selected <- DT::renderDataTable(server=TRUE, filter='top',
-  																			options = list(pageLength = 15, lengthMenu = c(3, 5, 10, 15), select=FALSE),
-  																			{ my$dataset_selected() })
+                                        options = list(pageLength = 15, lengthMenu = c(3, 5, 10, 15), select=FALSE),
+                                        { my$dataset_selected() })
 
   observeEvent(input$selected_as_source, {
     req(my$dataset_selected())
@@ -818,7 +747,7 @@ function(input, output, session) {
   observe(priority = 1, {
     req(my$dataset_grouped())
 
-    print("Getting plot dataset.")
+    # print('Getting plot dataset.')
 
     dataset <- NULL
 
@@ -916,19 +845,19 @@ function(input, output, session) {
   })
 
   n$x_breaks <- reactive({
-  	n <- 30L
-  	if (!is.na(input$n_x_breaks) && as.integer(input$n_x_breaks) > 0) {
-  		n <- as.integer(input$n_x_breaks)
-  	}
-  	return(n)
+    n <- 30L
+    if (!is.na(n_x_breaks_dbnce()) && as.integer(n_x_breaks_dbnce()) > 0) {
+      n <- as.integer(n_x_breaks_dbnce())
+    }
+    return(n)
   })
 
   n$y_breaks <- reactive({
-  	n <- 10L
-  	if (!is.na(input$n_y_breaks) && as.integer(input$n_y_breaks) > 0) {
-  		n <- as.integer(input$n_y_breaks)
-  	}
-  	return(n)
+    n <- 10L
+    if (!is.na(n_y_breaks_dbnce()) && as.integer(n_y_breaks_dbnce()) > 0) {
+      n <- as.integer(n_y_breaks_dbnce())
+    }
+    return(n)
   })
 
   output$countPlotMessage <- renderText({
@@ -947,7 +876,7 @@ function(input, output, session) {
   plot$counts <- reactive({
     req(my$dataset_p)
 
-    print('Entered counts_plot block')
+    # print('Entered counts_plot block')
 
     dataset <- copy(my$dataset_p)
 
@@ -972,10 +901,10 @@ function(input, output, session) {
       }
 
       if (n$dates > 1 || (is.null(input$aggWithinFUN) && sum(dataset[['# observations']], na.rm=T) == nrow(dataset))) {
-      	# contains non-distinct columns; sum them if no agg-within function is specified.
+        # contains non-distinct columns; sum them if no agg-within function is specified.
         grouping <- c(group_col, feature_col)
         dataset <- dataset[, .('value'=sum(get(value_col), na.rm = T),
-        											 '# observations'=sum(get('# observations'))), by = grouping]
+                               '# observations'=sum(get('# observations'))), by = grouping]
         value_col <- paste0('Sum of ', value_col)
         setnames(dataset, old='value', new=value_col)
         y_lab <- value_col
@@ -1007,11 +936,11 @@ function(input, output, session) {
       if (geom == 'Bars') {
         p <- ggplot(dataset, aes(x=toName(feature_col), y=toName(value_col),
                                  group=toName(feature_col), fill=toName(feature_col), color=toName(feature_col),
-        												 tooltip=paste(paste0('y = ',y_format(toName(value_col))),
-        												 							paste0('n = ',comma(toName('# observations'))),
-        												 							sep='\n'),
-        												 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|'))) +
-        	geom_bar_interactive(stat='identity', position=position_dodge(width=1), na.rm = T)
+                                 tooltip=paste(paste0('y = ',y_format(toName(value_col))),
+                                               paste0('n = ',comma(toName('# observations'))),
+                                               sep='\n'),
+                                 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|'))) +
+          geom_bar_interactive(stat='identity', position=position_dodge(width=1), na.rm = T)
           # geom_bar(stat='identity', position=position_dodge(width=1), na.rm = T)
 
         no_legend <- TRUE
@@ -1025,11 +954,11 @@ function(input, output, session) {
         # Bars stacked
         p <- ggplot(dataset, aes(x=x_text, y=toName(value_col),
                                  group=toName(feature_col), fill=toName(feature_col), color=toName(feature_col),
-        												 tooltip=paste(paste0('y = ',y_format(toName(value_col))),
-        												 							paste0('n = ',comma(toName('# observations'))),
-        												 							sep='\n'),
-        												 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|'))) +
-        	geom_bar_interactive(stat='identity', width=1, position=position_stack(reverse=T), na.rm = T)
+                                 tooltip=paste(paste0('y = ',y_format(toName(value_col))),
+                                               paste0('n = ',comma(toName('# observations'))),
+                                               sep='\n'),
+                                 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|'))) +
+          geom_bar_interactive(stat='identity', width=1, position=position_stack(reverse=T), na.rm = T)
                 # geom_bar(stat='identity', width=1, position=position_stack(reverse=T), na.rm = T)
 
         if (geom == 'Pie') {
@@ -1042,22 +971,22 @@ function(input, output, session) {
   })
 
   plot_final$counts <- reactive({
-  	req(my$dataset_p,
-  			n$groups <= 50, n$features <= 100)
+    req(my$dataset_p,
+        n$groups <= 50, n$features <= 100)
 
-  	return(postProcessPlot(plot$counts()))
+    return(postProcessPlot(plot$counts()))
   })
 
-	observeEvent(input$reactivity, {
-		if (input$reactivity==TRUE) {
-			output$count_plot <- renderggiraph({ plot_final$counts() %>% asGGiraph() })
-		} else {
-				output$count_plot <- renderggiraph({
-					input$submit # fire on 'submit'
-					isolate({ plot_final$counts() %>% asGGiraph() })
-				})
-		}
-	})
+  observeEvent(input$reactivity, {
+    if (input$reactivity==TRUE) {
+      output$count_plot <- renderggiraph({ plot_final$counts() %>% asGGiraph() })
+    } else {
+        output$count_plot <- renderggiraph({
+          input$submit # fire on 'submit'
+          isolate({ plot_final$counts() %>% asGGiraph() })
+        })
+    }
+  })
 
   output$trendPlotMessage <- renderText({
     if (is.null(cols$date)) {
@@ -1073,7 +1002,7 @@ function(input, output, session) {
 
   plot$trends <- reactive({
 
-    print('Entered trends_plot block')
+    # print('Entered trends_plot block')
 
     dataset <- copy(my$dataset_p)
 
@@ -1087,7 +1016,7 @@ function(input, output, session) {
 
     isolate({
       id_col <- cols$id
-    	date_col <- cols$date
+      date_col <- cols$date
 
       if (nrow(dataset) > 1 && !is.null(value_col) && all(is.null(c(date_col, group_col, feature_col)))) {
         # do this to prevent several unnecessary layers plotted atop one another
@@ -1121,18 +1050,18 @@ function(input, output, session) {
       x_format <- NULL
 
       if (is.factor(dataset[[date_col]]) && all(grepl(dataset[[date_col]], pattern='^\\d+$'))) {
-      	dataset[, c(date_col) := as.integer(as.character(get(date_col)))]
-      	x_format <- waiver() # leave x-axis text as-is.
+        dataset[, c(date_col) := as.integer(as.character(get(date_col)))]
+        x_format <- waiver() # leave x-axis text as-is.
       }
 
       p <- ggplot(dataset, aes(x=toName(date_col), y=toName(value_col),
                                group=toName(feature_col), fill=toName(feature_col), color=toName(feature_col),
-      												 tooltip=paste(toName(feature_col),
-      												 							paste(date_col, toName(date_col), sep=': '),
-      												 							paste0('y = ', y_format(toName(value_col))),
-      												 							paste0('n = ', comma(toName('# observations'))),
-      												 							sep='\n'),
-      												 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|')))
+                               tooltip=paste(toName(feature_col),
+                                             paste(date_col, toName(date_col), sep=': '),
+                                             paste0('y = ', y_format(toName(value_col))),
+                                             paste0('n = ', comma(toName('# observations'))),
+                                             sep='\n'),
+                               data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|')))
 
       non_distinct_rows <- (is.null(input$aggWithinFUN) && sum(dataset[['# observations']], na.rm=T) == nrow(dataset))
 
@@ -1147,81 +1076,81 @@ function(input, output, session) {
                                         paste0('n = ', comma(toName('# observations'))),
                                         sep='\n'),
                           data_id=toName(id_col))) +
-          	geom_smooth(stat='smooth', method = 'loess', se = F, na.rm = T) +
-          	geom_point_interactive(size=2, alpha=0.5)
+            geom_smooth(stat='smooth', method = 'loess', se = F, na.rm = T) +
+            geom_point_interactive(size=2, alpha=0.5)
         } else {
-        	id_col <- NULL
+          id_col <- NULL
 
-        	grouping <- c(date_col, group_col, feature_col)
+          grouping <- c(date_col, group_col, feature_col)
           dataset <- dataset[, .('value'=sum(get(value_col), na.rm = T),
-          											 '# observations'=sum(get('# observations'))),
-          									 by = grouping]
+                                 '# observations'=sum(get('# observations'))),
+                             by = grouping]
 
           value_col <- paste0('Sum of ', value_col)
           setnames(dataset, old='value', new=value_col)
           y_lab <- value_col
 
           p <- ggplot(dataset, aes(x=toName(date_col), y=toName(value_col),
-          												 group=toName(feature_col), fill=toName(feature_col), color=toName(feature_col),
-          												 tooltip=paste(toName(feature_col),
-          												 							paste(date_col, toName(date_col), sep=': '),
-          												 							paste0('y = ', y_format(toName(value_col))),
-          												 							paste0('n = ', comma(toName('# observations'))),
-          												 							sep='\n'),
-          												 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|')))
+                                   group=toName(feature_col), fill=toName(feature_col), color=toName(feature_col),
+                                   tooltip=paste(toName(feature_col),
+                                                 paste(date_col, toName(date_col), sep=': '),
+                                                 paste0('y = ', y_format(toName(value_col))),
+                                                 paste0('n = ', comma(toName('# observations'))),
+                                                 sep='\n'),
+                                   data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|')))
         }
       }
 
       if (!non_distinct_rows && geom == 'Lines') {
-      	p <- p + geom_line(size=1, na.rm = T) + geom_point_interactive(size=2, alpha=1, na.rm = T)
+        p <- p + geom_line(size=1, na.rm = T) + geom_point_interactive(size=2, alpha=1, na.rm = T)
       } else if (geom == 'Bars') {
-      	p <- p + geom_bar_interactive(stat = 'identity', width=1, color='gray', size=0.5, position = position_stack(reverse = TRUE), na.rm = T)
+        p <- p + geom_bar_interactive(stat = 'identity', width=1, color='gray', size=0.5, position = position_stack(reverse = TRUE), na.rm = T)
       }
 
       if (!is.integer(dataset[[date_col]])) {
-      	n_dateSplits <- min(n$dates, n$x_breaks())
-      	n_dateLabels <- n_dateSplits # min(n$dates, n_dateLabels, n$x_breaks())
+        n_dateSplits <- min(n$dates, n$x_breaks())
+        n_dateLabels <- n_dateSplits # min(n$dates, n_dateLabels, n$x_breaks())
 
-  	    if (is.factor(dataset[[date_col]])) {
+        if (is.factor(dataset[[date_col]])) {
 
-  	      i_splits <- round(seq(from=1, to=length(levels(dataset[[date_col]])), length.out = n_dateSplits))
-  	      date_limits <- levels(dataset[[date_col]])
-  	      date_labels <- date_limits
-  	      date_labels[!(date_labels %in% date_labels[i_splits])] <- ''
+          i_splits <- round(seq(from=1, to=length(levels(dataset[[date_col]])), length.out = n_dateSplits))
+          date_limits <- levels(dataset[[date_col]])
+          date_labels <- date_limits
+          date_labels[!(date_labels %in% date_labels[i_splits])] <- ''
 
-  	      if (params$rotate) { date_limits <- rev(date_limits) }
+          if (params$rotate) { date_limits <- rev(date_limits) }
 
-  	      p <- p + scale_x_discrete(name=date_col, limits = date_limits, labels = date_labels)
+          p <- p + scale_x_discrete(name=date_col, limits = date_limits, labels = date_labels)
 
-  	      date_labels <- date_labels[date_labels != '']
+          date_labels <- date_labels[date_labels != '']
 
-  	    } else {
-  	      date_trans_str <- NULL
+        } else {
+          date_trans_str <- NULL
 
-  	      if (is.character(dataset[[date_col]])) {
-  	        date_trans_str <- sapply(date_trans_list, extract, input$dateTransform) %>% .[!is.na(.)]
-  	        dataset[, c(date_col) := parse_date_time(get(date_col), orders = date_trans_str)]
-  	      }
+          if (is.character(dataset[[date_col]])) {
+            date_trans_str <- sapply(date_trans_list, extract, input$dateTransform) %>% .[!is.na(.)]
+            dataset[, c(date_col) := parse_date_time(get(date_col), orders = date_trans_str)]
+          }
 
-  	      date_labels <- pretty_dates(dataset[[date_col]], n=n_dateSplits)
+          date_labels <- pretty_dates(dataset[[date_col]], n=n_dateSplits)
 
-  	      scale_x <- scale_x_datetime
+          scale_x <- scale_x_datetime
 
-  	      if (is.Date(dataset[[date_col]])) {
-  	        scale_x <- scale_x_date
-  	        date_labels <- as_date(date_labels)
-  	      }
+          if (is.Date(dataset[[date_col]])) {
+            scale_x <- scale_x_date
+            date_labels <- as_date(date_labels)
+          }
 
-  	      if (params$rotate) {
-  	        date_labels <- rev(date_labels)
-  	      }
+          if (params$rotate) {
+            date_labels <- rev(date_labels)
+          }
 
-  	      if (is.null(date_trans_str)) {
-  	        p <- p + scale_x(breaks = date_labels, expand=c(0.01, 0))
-  	      } else {
-  	        p <- p + scale_x(breaks = date_labels, date_labels=date_trans_str, expand=c(0.01, 0))
-  	      }
-  	    }
+          if (is.null(date_trans_str)) {
+            p <- p + scale_x(breaks = date_labels, expand=c(0.01, 0))
+          } else {
+            p <- p + scale_x(breaks = date_labels, date_labels=date_trans_str, expand=c(0.01, 0))
+          }
+        }
       }
     })
 
@@ -1229,29 +1158,29 @@ function(input, output, session) {
   })
 
   plot_final$trends <- reactive({
-  	req(my$dataset_p, cols$date, n$groups <= 50, n$features <= 100)
+    req(my$dataset_p, cols$date, n$groups <= 50, n$features <= 100)
 
-  	return(postProcessPlot(plot$trends()))
+    return(postProcessPlot(plot$trends()))
   })
 
   observeEvent(input$reactivity, {
-  	if (input$reactivity==TRUE) {
-  		output$trends_plot <- renderggiraph({ plot_final$trends() %>% asGGiraph() })
-  	} else {
-  		output$trends_plot <- renderggiraph({
-  			input$submit # fire on 'submit'
-  			isolate({ plot_final$trends() %>% asGGiraph() })
-  		})
-  	}
+    if (input$reactivity==TRUE) {
+      output$trends_plot <- renderggiraph({ plot_final$trends() %>% asGGiraph() })
+    } else {
+      output$trends_plot <- renderggiraph({
+        input$submit # fire on 'submit'
+        isolate({ plot_final$trends() %>% asGGiraph() })
+      })
+    }
   })
 
   output$distPlotMessage <- renderText({
-		if (n$groups > 50) {
-			return('Max of 50 groups exceeded.')
-		} else if (n$features > 100) {
-			return('Max of 100 features exceeeded.')
-		} else if (!is.null(input$aggWithinFUN)) {
-		  return('Consider removing within-groups aggregation.')
+    if (n$groups > 50) {
+      return('Max of 50 groups exceeded.')
+    } else if (n$features > 100) {
+      return('Max of 100 features exceeeded.')
+    } else if (!is.null(input$aggWithinFUN)) {
+      return('Consider removing within-groups aggregation.')
     } else {
       return('')
     }
@@ -1259,7 +1188,7 @@ function(input, output, session) {
 
   plot$dist <- reactive({
 
-    print('Entered dist_plot block')
+    # print('Entered dist_plot block')
 
     dataset <- copy(my$dataset_p)
 
@@ -1270,7 +1199,7 @@ function(input, output, session) {
     geom <- input$distGeom
     show_rug <- input$showRug
 
-    n_bins <- as.integer(input$bins)
+    n_bins <- as.integer(hist_bins_dbnce())
     values_as <- input$histValuesAs
 
     x_breaks <- n$x_breaks()
@@ -1304,17 +1233,17 @@ function(input, output, session) {
 
       if (geom == 'Histogram') {
 
-      	if (is.na(n_bins) || n_bins < 2) { n_bins <- 30 }
+        if (is.na(n_bins) || n_bins < 2) { n_bins <- 30 }
 
         grouping <- c(group_col, feature_col)
 
         val_range <- range(dataset[[value_col]])
         if (length(unique(val_range)) > 1) {
-  	      dataset <- dataset[, .(value_bins = cut_format(get(value_col), format_fun = x_format, sep = ' ~ ',
-  	      																				breaks=unique(round(seq(from=val_range[1], to=val_range[2], length.out=n_bins), digits=decimalPrecision())), # Inf),
-  	      																				right=FALSE, include.lowest = T, ordered_result = T, dig.lab=10)), by=grouping]
+          dataset <- dataset[, .(value_bins = cut_format(get(value_col), format_fun = x_format, sep = ' ~ ',
+                                                  breaks=unique(round(seq(from=val_range[1], to=val_range[2], length.out=n_bins), digits=decimalPrecision())), # Inf),
+                                                  right=FALSE, include.lowest = T, ordered_result = T, dig.lab=10)), by=grouping]
         } else {
-        	dataset[, value_bins := factor(comma(val_range[1]))]
+          dataset[, value_bins := factor(comma(val_range[1]))]
         }
 
         dataset <- dataset[, .(n = .N), by=c(grouping, 'value_bins')]
@@ -1324,27 +1253,27 @@ function(input, output, session) {
         x_format <- NULL
 
         if (values_as == '% of Grand Total') {
-        	dataset[, n := n/sum(n)]
-        	y_lab <- paste(y_lab, paste0('(', values_as, ')'))
-        	y_format <- scales::percent
+          dataset[, n := n/sum(n)]
+          y_lab <- paste(y_lab, paste0('(', values_as, ')'))
+          y_format <- scales::percent
         } else if (values_as == '% of Group Total') {
-        	if (is.null(group_col)) {
-        		dataset[, n := n/sum(n)]
-        	} else {
-        		dataset[, n := as.numeric(n)]
-        		dataset[, n := n/sum(n), by=c(group_col)]
-        	}
-        	y_lab <- paste(y_lab, '(% of Group Total)')
-        	y_format <- scales::percent
+          if (is.null(group_col)) {
+            dataset[, n := n/sum(n)]
+          } else {
+            dataset[, n := as.numeric(n)]
+            dataset[, n := n/sum(n), by=c(group_col)]
+          }
+          y_lab <- paste(y_lab, '(% of Group Total)')
+          y_format <- scales::percent
         }
 
         p <- ggplot(dataset, aes(x=value_bins, y=n,
                                  group=toName(feature_col), fill=toName(feature_col), color=toName(feature_col),
-        												 tooltip=paste(toName(feature_col),
-        												 							paste0('y = ', y_format(n)),
-        												 							paste0('x = ', value_bins),
-        												 							sep='\n'),
-        												 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|'))) +
+                                 tooltip=paste(toName(feature_col),
+                                               paste0('y = ', y_format(n)),
+                                               paste0('x = ', value_bins),
+                                               sep='\n'),
+                                 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|'))) +
               geom_bar_interactive(stat = 'identity', width=1, position = position_stack(reverse=T), color='gray', size=0.5, na.rm = T)
 
         x_limits <- levels(dataset[['value_bins']])
@@ -1369,34 +1298,34 @@ function(input, output, session) {
         grouping <- c(group_col, feature_col)
 
         dt_quantiles <- dataset[, .(q1 = quantile(get(value_col), probs = 0.25, na.rm = T),
-        														q3 = quantile(get(value_col), probs = 0.75, na.rm = T),
-        														iqr = IQR(get(value_col), na.rm=T)), by=grouping]
+                                    q3 = quantile(get(value_col), probs = 0.75, na.rm = T),
+                                    iqr = IQR(get(value_col), na.rm=T)), by=grouping]
 
         dt_bounds <- dt_quantiles[, .(lower = q1 - 1.5*iqr,
-        															upper = q3 + 1.5*iqr), by=grouping]
+                                      upper = q3 + 1.5*iqr), by=grouping]
 
         dt_outliers <- NULL
 
         if (!is.null(grouping)) {
-        	dt_outliers <- merge(dataset, dt_bounds, by=grouping)[!between(get(value_col), lower, upper),]
+          dt_outliers <- merge(dataset, dt_bounds, by=grouping)[!between(get(value_col), lower, upper),]
         } else {
-        	dt_outliers <- dataset[!between(get(value_col), dt_bounds$lower, dt_bounds$upper),]
+          dt_outliers <- dataset[!between(get(value_col), dt_bounds$lower, dt_bounds$upper),]
         }
 
         p <- ggplot(dataset, aes(x=toName(feature_col), y=toName(value_col),
                                  group=toName(feature_col), color=toName(feature_col), fill=toName(feature_col))) +
-        	geom_boxplot_interactive(aes(tooltip=paste(toName(feature_col),
-        																						 toName(value_col),
-        																						 sep='\n'),
-        															 data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|')),
-        													 fill=NA, size=1, outlier.shape=NA, na.rm = T, show.legend = F) # position = position_dodge(1),
+          geom_boxplot_interactive(aes(tooltip=paste(toName(feature_col),
+                                                     toName(value_col),
+                                                     sep='\n'),
+                                       data_id=paste0(paste(toName(date_col), toName(group_col), toName(feature_col), sep='|'), '|')),
+                                   fill=NA, size=1, outlier.shape=NA, na.rm = T, show.legend = F) # position = position_dodge(1),
 
         if (nrow(dt_outliers) > 0) {
-        	p <- p + geom_point_interactive(data=dt_outliers,
-        												 aes(color=toName(feature_col), fill=toName(feature_col),
-        												 		tooltip=paste0('y = ', comma(toName(value_col))),
-        												 		data_id=toName('#id')),
-        												 size=2, alpha=1, position = position_jitter(height=0, width=0.375), show.legend = F)
+          p <- p + geom_point_interactive(data=dt_outliers,
+                                 aes(color=toName(feature_col), fill=toName(feature_col),
+                                     tooltip=paste0('y = ', comma(toName(value_col))),
+                                     data_id=toName('#id')),
+                                 size=2, alpha=1, position = position_jitter(height=0, width=0.375), show.legend = F)
         }
 
         if (rotate) {
@@ -1405,14 +1334,14 @@ function(input, output, session) {
       }
 
       if (show_rug) {
-      	if ((input$distGeom == 'Histogram' && !params$rotate) ||
-      			(input$distGeom != 'Histogram' && params$rotate)) {
-  	    	p <- p + geom_rug(sides='b', size=0.25, # aes(y=0),
-  	    										position = position_jitter(height=0), alpha=0.25, show.legend = F, na.rm = T)
-  	    } else {
-  	    	p <- p + geom_rug(sides='l', size=0.25, # aes(x=0),
-  	    										position = position_jitter(width=0), alpha=0.25, show.legend = F, na.rm = T)
-  	    }
+        if ((input$distGeom == 'Histogram' && !params$rotate) ||
+            (input$distGeom != 'Histogram' && params$rotate)) {
+          p <- p + geom_rug(sides='b', size=0.25, # aes(y=0),
+                            position = position_jitter(height=0), alpha=0.25, show.legend = F, na.rm = T)
+        } else {
+          p <- p + geom_rug(sides='l', size=0.25, # aes(x=0),
+                            position = position_jitter(width=0), alpha=0.25, show.legend = F, na.rm = T)
+        }
       }
     })
 
@@ -1421,172 +1350,172 @@ function(input, output, session) {
   })
 
   plot_final$dist <- reactive({
-  	req(my$dataset_p,
-  			n$groups <= 50, n$features <= 100)
+    req(my$dataset_p,
+        n$groups <= 50, n$features <= 100)
 
-  	return(postProcessPlot(plot$dist()))
+    return(postProcessPlot(plot$dist()))
   })
 
   observeEvent(input$reactivity, {
-  	if (input$reactivity==TRUE) {
-  		output$distribution_plot <- renderggiraph({ plot_final$dist() %>% asGGiraph() })
-  	} else {
-  		output$distribution_plot <- renderggiraph({
-  			input$submit # fire on 'submit'
-  			isolate({ plot_final$dist() %>% asGGiraph() })
-  		})
-  	}
+    if (input$reactivity==TRUE) {
+      output$distribution_plot <- renderggiraph({ plot_final$dist() %>% asGGiraph() })
+    } else {
+      output$distribution_plot <- renderggiraph({
+        input$submit # fire on 'submit'
+        isolate({ plot_final$dist() %>% asGGiraph() })
+      })
+    }
   })
 
   my$dataset_wide <- reactive({
 
     req(my$dataset_dates_parsed(),
-    		input$featureX, input$featureY)
+        input$featureX, input$featureY)
 
-  	print('Getting wide dataset.')
+    # print('Getting wide dataset.')
 
-  	if (n$features <= 1) {
-  		return(my$dataset_dates_parsed())
-  	} else {
+    if (n$features <= 1) {
+      return(my$dataset_dates_parsed())
+    } else {
 
-  	  dataset <- my$dataset_dates_parsed()
+      dataset <- my$dataset_dates_parsed()
 
-	    feature_col <- cols$feature
-	    value_col <- isolate(c$value)
+      feature_col <- cols$feature
+      value_col <- isolate(c$value)
 
-	    id_cols <- paste(colnames(dataset) %>% .[!(. %in% c(feature_col, value_col)) & !grepl(., pattern='^#')],
-	                     collapse = '+')
+      id_cols <- paste(colnames(dataset) %>% .[!(. %in% c(feature_col, value_col)) & !grepl(., pattern='^#')],
+                       collapse = '+')
 
-	    if (length(id_cols) == 0 || id_cols == '') { id_cols <- '.' }
-	    else { id_cols <- sub(id_cols, pattern='(.+\\s.+)', replacement='`\\1`') }
+      if (length(id_cols) == 0 || id_cols == '') { id_cols <- '.' }
+      else { id_cols <- sub(id_cols, pattern='(.+\\s.+)', replacement='`\\1`') }
 
-	    f <- paste(id_cols, feature_col, sep='~')
+      f <- paste(id_cols, feature_col, sep='~')
 
-	    return(dataset[get(feature_col) %in% c(input$featureX, input$featureY), ] %>%
-	    										dcast(formula = f, value.var=value_col, fun.aggregate=mean)) #, fill=NA))
-  	}
+      return(dataset[get(feature_col) %in% c(input$featureX, input$featureY), ] %>%
+                          dcast(formula = f, value.var=value_col, fun.aggregate=mean)) #, fill=NA))
+    }
   })
 
   output$pairsPlotMessage <- renderText({
     if (n$features > 1 && is.null(c$value)) {
       'Select a value column.'
     } else if (is.null(input$featureX) || is.null(input$featureY)) {
-    	'Specify the X and Y axes.'
-  	} else { # if (is.null(input$aggWithinFUN) || n$features == nrow(my$dataset_p)) {
+      'Specify the X and Y axes.'
+    } else { # if (is.null(input$aggWithinFUN) || n$features == nrow(my$dataset_p)) {
       'Using source dataset.'
     }
   })
 
   observe({
-  	req(my$dataset_p) #, pcols$feature)
+    req(my$dataset_p) #, pcols$feature)
 
-  	all_features <- NULL
+    all_features <- NULL
 
-  	if (between(n$features, 1, 100)) {
-  		all_features <- levels(my$dataset_p[[pcols$feature]])
-  	} else {
-  		col_names <- colnames(my$dataset_dates_parsed()) %>% .[. != '#id']
-  		all_features <- col_names[my$dataset_dates_parsed()[, lapply(.SD, class), .SDcols=col_names][1] %in% c('numeric', 'integer', 'double')]
-  	}
+    if (between(n$features, 1, 100)) {
+      all_features <- levels(my$dataset_p[[pcols$feature]])
+    } else {
+      col_names <- colnames(my$dataset_dates_parsed()) %>% .[. != '#id']
+      all_features <- col_names[my$dataset_dates_parsed()[, lapply(.SD, class), .SDcols=col_names][1] %in% c('numeric', 'integer', 'double')]
+    }
 
-  	if (length(all_features) > 100) {
-  		all_features <- all_features[1:100]
-  	}
+    if (length(all_features) > 100) {
+      all_features <- all_features[1:100]
+    }
 
     updateSelectizeInput(session, 'featureX', choices = all_features)
     updateSelectizeInput(session, 'featureY', choices = all_features)
   })
 
   plot$pairs <- reactive({
-  	req(my$dataset_wide(), input$featureX, input$featureY)
+    req(my$dataset_wide(), input$featureX, input$featureY)
 
-  	print('Entered pairs_plot block.')
+    # print('Entered pairs_plot block.')
 
-  	col_names <- colnames(my$dataset_wide())
+    col_names <- colnames(my$dataset_wide())
 
-  	group_col <- cols$group
+    group_col <- cols$group
 
-  	isolate({
-  	  feature_x <- input$featureX
-  	  feature_y <- input$featureY
+    isolate({
+      feature_x <- input$featureX
+      feature_y <- input$featureY
 
-    	if ('#id' %in% col_names) {
-    		id_expr <- paste0("toName('#id')")
-    	} else {
-    		col_names <- col_names[!(col_names %in% c('#id', feature_x, feature_y))]
-    		id_expr <- paste0('paste0(paste(', paste(col_names, collapse = ', '), ', sep="|"), "|")')
-    	}
+      if ('#id' %in% col_names) {
+        id_expr <- paste0("toName('#id')")
+      } else {
+        col_names <- col_names[!(col_names %in% c('#id', feature_x, feature_y))]
+        id_expr <- paste0('paste0(paste(', paste(col_names, collapse = ', '), ', sep="|"), "|")')
+      }
 
-    	p <- ggplot(my$dataset_wide(), aes(x=toName(feature_x), y=toName(feature_y),
-    																		 group=toName(group_col), color=toName(group_col), fill=toName(group_col),
-    																		 tooltip=paste(paste0('x = ',comma(toName(feature_x))),
-    																		 							paste0('y = ',comma(toName(feature_y))),
-    																		 							sep='\n'),
-    																		 data_id = eval(parse(text=id_expr)))) +
-    		geom_point_interactive(size=2, alpha=0.5) +
-    		geom_smooth(method='lm', se=F, color='gray20', linetype='dashed')
+      p <- ggplot(my$dataset_wide(), aes(x=toName(feature_x), y=toName(feature_y),
+                                         group=toName(group_col), color=toName(group_col), fill=toName(group_col),
+                                         tooltip=paste(paste0('x = ',comma(toName(feature_x))),
+                                                       paste0('y = ',comma(toName(feature_y))),
+                                                       sep='\n'),
+                                         data_id = eval(parse(text=id_expr)))) +
+        geom_point_interactive(size=2, alpha=0.5) +
+        geom_smooth(method='lm', se=F, color='gray20', linetype='dashed')
 
-  	})
+    })
 
-  	return(facet_features(p, x_lab=feature_x, y_lab=feature_y,
-  												x_format=scales::comma, y_format = scales::comma, no_legend = TRUE))
+    return(facet_features(p, x_lab=feature_x, y_lab=feature_y,
+                          x_format=scales::comma, y_format = scales::comma, no_legend = TRUE))
   })
 
   plot_final$pairs <- reactive({
-  	req(my$dataset_wide(), n$groups <= 50, plot$pairs())
+    req(my$dataset_wide(), n$groups <= 50, plot$pairs())
 
-  	return(postProcessPlot(plot$pairs(), n_colors = isolate(n$groups)))
+    return(postProcessPlot(plot$pairs(), n_colors = isolate(n$groups)))
   })
 
   observeEvent(input$reactivity, {
-  	if (input$reactivity==TRUE) {
-  		output$pairs_plot <- renderggiraph({ plot_final$pairs() %>% asGGiraph() })
-  	} else {
-  		output$pairs_plot <- renderggiraph({
-  			input$submit # fire on 'submit'
-  			isolate({ plot_final$pairs() %>% asGGiraph() })
-  		})
-  	}
+    if (input$reactivity==TRUE) {
+      output$pairs_plot <- renderggiraph({ plot_final$pairs() %>% asGGiraph() })
+    } else {
+      output$pairs_plot <- renderggiraph({
+        input$submit # fire on 'submit'
+        isolate({ plot_final$pairs() %>% asGGiraph() })
+      })
+    }
   })
 
   my$theme <- reactive({
-    print('Entered theme block.')
+    # print('Entered theme block.')
 
     angle_x <- as.integer(input$angleX)
 
     t <- theme(axis.text.x = element_text(size=rel(1.5)),
-		          axis.text.y = element_text(size=rel(1.5)),
-		          legend.title = element_blank(),
-		          legend.position = input$legendPos,
-		          legend.justification = 'top',
-		          legend.box.background = element_rect(color='gray30'),
-		          legend.text = element_text(size=rel(1.25)),
-    					strip.background = element_rect(color = 'gray30'),
-    					strip.text = element_text(size=rel(1.25)),
-    					# panel.background = element_rect(color='gray30'),
-    					panel.border = element_rect(color='gray30', fill=NA),
-		          axis.title.y = element_text(size=rel(1.25), face='bold'),
-		          axis.title.x = element_text(size=rel(1.25), face='bold'),
-		          plot.title = element_text(size=rel(2.0), hjust=0.5, face='bold'),
-		          plot.subtitle = element_text(size=rel(1.5), hjust=0.5),
-		          plot.caption = element_text(size=rel(1.5), face = 'italic'),
-    					plot.background = element_rect(color=NA)
-    					)
+              axis.text.y = element_text(size=rel(1.5)),
+              legend.title = element_blank(),
+              legend.position = input$legendPos,
+              legend.justification = 'top',
+              legend.box.background = element_rect(color='gray30'),
+              legend.text = element_text(size=rel(1.25)),
+              strip.background = element_rect(color = 'gray30'),
+              strip.text = element_text(size=rel(1.25)),
+              # panel.background = element_rect(color='gray30'),
+              panel.border = element_rect(color='gray30', fill=NA),
+              axis.title.y = element_text(size=rel(1.25), face='bold'),
+              axis.title.x = element_text(size=rel(1.25), face='bold'),
+              plot.title = element_text(size=rel(2.0), hjust=0.5, face='bold'),
+              plot.subtitle = element_text(size=rel(1.5), hjust=0.5),
+              plot.caption = element_text(size=rel(1.5), face = 'italic'),
+              plot.background = element_rect(color=NA)
+              )
 
     if (angle_x > 0) {
-    	if (angle_x == 90) {
-    		t <- t + theme(axis.text.x = element_text(size=rel(1.5), hjust=1, vjust=0.35, angle=angle_x))
-    	} else {
-    		t <- t + theme(axis.text.x = element_text(size=rel(1.5), hjust=1, angle=angle_x))
-    	}
+      if (angle_x == 90) {
+        t <- t + theme(axis.text.x = element_text(size=rel(1.5), hjust=1, vjust=0.35, angle=angle_x))
+      } else {
+        t <- t + theme(axis.text.x = element_text(size=rel(1.5), hjust=1, angle=angle_x))
+      }
     }
 
     if (params$rotate) {
-    	t <- t + theme(panel.grid.major.y = element_blank(),
-    								 panel.grid.minor.y = element_blank())
+      t <- t + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank())
     } else {
-    	t <- t + theme(panel.grid.major.x = element_blank(),
-    								 panel.grid.minor.x = element_blank())
+      t <- t + theme(panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
     }
 
     return(t)
@@ -1595,64 +1524,64 @@ function(input, output, session) {
   facet_features <- function(p, x_lab=NULL, y_lab=NULL, no_legend = FALSE,
                              x_format=scales::comma, y_format=scales::comma) {
 
-  	print('Entered facet_features function.')
+    # print('Entered facet_features function.')
 
-  	if (nchar(input$xlab) > 0) {
-  		if (grepl(input$xlab, pattern='^\\s+$')) {
-  			x_lab <- NULL
-  		} else {
-  			x_lab <- input$xlab
-  		}
-  	}
+    if (nchar(plot_xlab_dbnce()) > 0) {
+      if (grepl(plot_xlab_dbnce(), pattern='^\\s+$')) {
+        x_lab <- NULL
+      } else {
+        x_lab <- plot_xlab_dbnce()
+      }
+    }
 
-  	if (nchar(input$ylab) > 0) {
-  		if (grepl(input$ylab, pattern='^\\s+$')) {
-  			y_lab <- NULL
-  		} else {
-  			y_lab <- input$ylab
-  		}
-  	}
+    if (nchar(plot_ylab_dbnce()) > 0) {
+      if (grepl(plot_ylab_dbnce(), pattern='^\\s+$')) {
+        y_lab <- NULL
+      } else {
+        y_lab <- plot_ylab_dbnce()
+      }
+    }
 
     if (params$rotate) {
       p <- p + coord_flip()
     }
 
-		n_x_breaks <- n$x_breaks()
-		n_y_breaks <- n$y_breaks()
+    n_x_breaks <- n$x_breaks()
+    n_y_breaks <- n$y_breaks()
 
     if (!is.null(x_format)) {
 
 
-    	scale_x_args <- list(name=x_lab, labels=x_format, breaks=scales::pretty_breaks(n=n_x_breaks), expand=c(0.01, 0))
+      scale_x_args <- list(name=x_lab, labels=x_format, breaks=scales::pretty_breaks(n=n_x_breaks), expand=c(0.01, 0))
 
       if (params$fixLimsX && isolate(n$groups) <= 1 && !identical(x_format, waiver())) {
-      	# waiver is only used when leaving numeric part of date as-is.
-      	scale_x_args <- c(scale_x_args, list(limits=c(0, NA)))
+        # waiver is only used when leaving numeric part of date as-is.
+        scale_x_args <- c(scale_x_args, list(limits=c(0, NA)))
       }
 
-    	p <- p + do.call(scale_x_continuous, scale_x_args)
+      p <- p + do.call(scale_x_continuous, scale_x_args)
 
     } else { # if (!missing(x_lab)) {
       p <- p + labs(x=x_lab)
     }
 
-		is_polar_coords <- as.logical((class(p$coordinates)[1] == 'CoordPolar'))
+    is_polar_coords <- as.logical((class(p$coordinates)[1] == 'CoordPolar'))
 
-  	if (!is.null(y_format)) {
+    if (!is.null(y_format)) {
 
-  		xpand <- if (is_polar_coords) { c(0, 0) } else { c(0.025, 0) }
+      xpand <- if (is_polar_coords) { c(0, 0) } else { c(0.025, 0) }
 
-  		scale_y_args <- list(name=y_lab, labels = y_format, breaks=scales::pretty_breaks(n=n_y_breaks), expand=xpand)
+      scale_y_args <- list(name=y_lab, labels = y_format, breaks=scales::pretty_breaks(n=n_y_breaks), expand=xpand)
 
-  		if (params$fixLimsY && n$groups <= 1) {
-  			scale_y_args <- c(scale_y_args, list(limits=c(0, NA)))
-  		}
+      if (params$fixLimsY && n$groups <= 1) {
+        scale_y_args <- c(scale_y_args, list(limits=c(0, NA)))
+      }
 
-  		p <- p + do.call(scale_y_continuous, scale_y_args)
+      p <- p + do.call(scale_y_continuous, scale_y_args)
 
-  	} else { # if (!missing(y_lab)) {
-  		p <- p + labs(y=y_lab)
-  	}
+    } else { # if (!missing(y_lab)) {
+      p <- p + labs(y=y_lab)
+    }
 
     facet_scales <- 'fixed'
 
@@ -1698,12 +1627,12 @@ function(input, output, session) {
   postProcessPlot <- function (p, myTheme=my$theme, baseTheme=theme_bw, n_colors = NULL,
                                title=NULL, subtitle=NULL, caption=NULL) { #xlab=NULL, ylab=NULL) {
 
-    print('Entered post_process block')
+    # print('Entered post_process block')
 
     if (missing(n_colors)) {
       n_colors <- max(1, isolate(n$features))
     } else {
-    	n_colors <- max(1, n_colors)
+      n_colors <- max(1, n_colors)
     }
 
     color_pal <- NULL
@@ -1724,14 +1653,14 @@ function(input, output, session) {
     p <- p + scale_color_manual(values=color_pal) + scale_fill_manual(values=color_pal)
 
     if (missing(title)) {
-      title <- if (!is.null(p$labels$title)) { p$labels$title } else { input$title }
+      title <- if (!is.null(p$labels$title)) { p$labels$title } else { plot_title_dbnce() }
     }
     if (missing(subtitle)) {
-      subtitle <- if (!is.null(p$labels$subtitle)) { p$labels$subtitle } else { input$subtitle }
+      subtitle <- if (!is.null(p$labels$subtitle)) { p$labels$subtitle } else { plot_subtitle_dbnce() }
     }
     # xlab <- NULL
     if (missing(caption)) {
-      caption <- if (!is.null(p$labels$caption)) { p$labels$caption } else { input$caption }
+      caption <- if (!is.null(p$labels$caption)) { p$labels$caption } else { plot_caption_dbnce() }
     }
 
     if (missing(baseTheme) && !is.null(input$plotTheme)) {
@@ -1739,75 +1668,75 @@ function(input, output, session) {
     }
 
     p <- p + baseTheme() + my$theme() +
-		      labs(title=bquote(underline(.(title))),
-		           subtitle=subtitle,
-		           caption=caption)
+          labs(title=bquote(underline(.(title))),
+               subtitle=subtitle,
+               caption=caption)
   }
 
   plot$height <- reactive({
-  	if (!between(input$plotHeight, 3, 120)) { 10L } else { as.integer(input$plotHeight) }
+    if (!between(plot_height_dbnce(), 3, 120)) { 10L } else { as.integer(plot_height_dbnce()) }
   })
 
   plot$width <- reactive({
-  	if (!between(input$plotWidth, 3, 120)) { 16L } else { as.integer(input$plotWidth) }
+    if (!between(plot_width_dbnce(), 3, 120)) { 16L } else { as.integer(plot_width_dbnce()) }
   })
 
   asGGiraph <- function(p) {
-  	return(ggiraph(code = print(p), selection_type = 'multiple', zoom_max = 5, width = 1,
-  								 height_svg = plot$height(), width_svg = plot$width(),
-  								 hover_css = "cursor:pointer;stroke:red;stroke-opacity:1;stroke-width:2;stroke-dasharray:10,10",
-  								 selected_css = "stroke:red;stroke-opacity:1;stroke-width:1.5;stroke-dasharray:10,10"))
+    return(ggiraph(code = print(p), selection_type = 'multiple', zoom_max = 5, width = 1,
+                   height_svg = plot$height(), width_svg = plot$width(),
+                   hover_css = "cursor:pointer;stroke:red;stroke-opacity:1;stroke-width:2;stroke-dasharray:10,10",
+                   selected_css = "stroke:red;stroke-opacity:1;stroke-width:1.5;stroke-dasharray:10,10"))
   }
 
   output$download_dist_plot <- downloadHandler(
-  	filename = function() { paste('distribution.png', sep='') },
-  	content = function(file) {
-  		ggsave(file, plot = plot_final$dist(), device = "png",
-  					 height = plot$height(), width = plot$width(), units = 'in')
-  	}
+    filename = function() { paste('distribution.png', sep='') },
+    content = function(file) {
+      ggsave(file, plot = plot_final$dist(), device = "png",
+             height = plot$height(), width = plot$width(), units = 'in')
+    }
   )
 
   output$download_trend_plot <- downloadHandler(
-  	filename = function() { paste('trends.png', sep='') },
-  	content = function(file) {
-  		ggsave(file, plot = plot_final$trends(), device = "png",
-  					 height = plot$height(), width = plot$width(), units = 'in')
-  	}
+    filename = function() { paste('trends.png', sep='') },
+    content = function(file) {
+      ggsave(file, plot = plot_final$trends(), device = "png",
+             height = plot$height(), width = plot$width(), units = 'in')
+    }
   )
 
   output$download_count_plot <- downloadHandler(
-  	filename = function() { paste('composition.png', sep='') },
-  	content = function(file) {
-  		ggsave(file, plot = plot_final$counts(), device = "png",
-  					 height = plot$height(), width = plot$width(), units = 'in')
-  	}
+    filename = function() { paste('composition.png', sep='') },
+    content = function(file) {
+      ggsave(file, plot = plot_final$counts(), device = "png",
+             height = plot$height(), width = plot$width(), units = 'in')
+    }
   )
 
   output$download_pairs_plot <- downloadHandler(
-  	filename = function() { paste('feature-comparison.png', sep='') },
-  	content = function(file) {
-  		ggsave(file, plot = plot_final$pairs(), device = "png",
-  					 height = plot$height(), width = plot$width(), units = 'in')
-  	}
+    filename = function() { paste('feature-comparison.png', sep='') },
+    content = function(file) {
+      ggsave(file, plot = plot_final$pairs(), device = "png",
+             height = plot$height(), width = plot$width(), units = 'in')
+    }
   )
 
   # https://yihui.shinyapps.io/DT-info/
   output$download = downloadHandler('data.csv', content = function(file) {
-  	req(my$dataset, input$dataset_rows_all)
+    req(my$dataset, input$dataset_rows_all)
 
-  	fwrite(my$dataset[input$dataset_rows_all,], file)
+    fwrite(my$dataset[input$dataset_rows_all,], file)
   })
 
   output$download_final = downloadHandler('data-filtered.csv', content = function(file) {
-  	req(my$dataset_grouped(), input$dataset_grouped_rows_all)
+    req(my$dataset_grouped(), input$dataset_grouped_rows_all)
 
     fwrite(my$dataset_grouped()[input$dataset_grouped_rows_all,], file)
   })
 
   output$download_selected = downloadHandler('data-selected.csv', content = function(file) {
-  	req(my$dataset_selected())
+    req(my$dataset_selected())
 
-  	fwrite(my$dataset_selected(), file)
+    fwrite(my$dataset_selected(), file)
   })
 
   outputOptions(output, 'dataset', suspendWhenHidden=FALSE, priority=3)
