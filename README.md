@@ -3,14 +3,12 @@
 
 Shiny GEM is a data analysis app written in R Shiny.
 
-*Now available from DockerHub!*
-
-
 - [Documentation](#documentation)
-- [How to Run](#how-to-run)
+- [Ways to Run](#ways-to-run)
   - [ShinyApps.io](#shinyappsio)
   - [Docker](#docker)
   - [From Source](#from-source)
+  - [ShinyStudio](#shinystudio)
 
 
 ## Documentation
